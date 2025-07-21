@@ -87,33 +87,15 @@ def binomial_tree_model(
     sigma: float,
     N: int = 100,
     option_type: str = "call",
-    american: bool = False
-) -> float:
+    american: bool = False,
+    market_price: float = None
+) -> dict:
     """
-    Binomial Tree option pricing model with Delta and Gamma.
-
-    Parameters:
-    - S : float
-        Current stock price
-    - K : float
-        Strike price
-    - T : float
-        Time to expiration (in years)
-    - r : float
-        Annualized risk-free interest rate
-    - sigma : float
-        Annualized volatility of the underlying stock
-    - N : int, default=100
-        Number of steps in the binomial tree
-    - option_type : str, "call" or "put"
-        Type of the option
-    - american : bool, default=False
-        Whether to price as an American-style option
+    Binomial Tree option pricing model with Delta, Gamma, and optional Implied Volatility.
 
     Returns:
-    - dict with price, delta, gamma
+    - dict with price, delta, gamma, and optional implied_vol
     """
-
     option_type = option_type.lower()
     if option_type not in ["call", "put"]:
         raise ValueError("option_type must be 'call' or 'put'")
@@ -134,11 +116,10 @@ def binomial_tree_model(
     else:
         option_values = [max(0, K - price) for price in asset_prices]
 
-    # Step 3: Backward induction to root, save step 1 & 2 values for Greeks
+    # Step 3: Backward induction
     for i in reversed(range(N)):
         for j in range(i + 1):
             expected = exp(-r * dt) * (p * option_values[j + 1] + (1 - p) * option_values[j])
-
             if american:
                 spot = S * (u ** j) * (d ** (i - j))
                 exercise = max(0, spot - K) if option_type == "call" else max(0, K - spot)
@@ -151,22 +132,34 @@ def binomial_tree_model(
             V_updown = option_values[1]
             V_downdown = option_values[0]
 
-    # Compute Delta
+    # Greeks
     S_up = S * u
     S_down = S * d
     delta = (option_values[1] - option_values[0]) / (S_up - S_down)
 
-    # Compute Gamma
     S_upup = S * (u ** 2)
     S_mid = S
     S_downdown = S * (d ** 2)
     gamma = ((V_upup - V_updown) / (S_upup - S_mid) - (V_updown - V_downdown) / (S_mid - S_downdown)) / ((S_upup - S_downdown) / 2)
 
-    return {
+    result = {
         "price": option_values[0],
         "delta": delta,
         "gamma": gamma
     }
+
+    # Implied Volatility (optional)
+    if market_price is not None:
+        def objective(vol):
+            return binomial_tree_model(S, K, T, r, vol, N, option_type, american)["price"] - market_price
+        try:
+            implied_vol = brentq(objective, 1e-6, 5.0)
+            result["implied_vol"] = implied_vol
+        except:
+            result["implied_vol"] = None
+
+    return result
+
 
 def trinomial_tree_model(
     S: float,
@@ -176,13 +169,11 @@ def trinomial_tree_model(
     sigma: float,
     N: int = 100,
     option_type: str = "call",
-    american: bool = False
+    american: bool = False,
+    market_price: float = None
 ) -> dict:
     """
-    Trinomial Tree model for pricing European or American options, with Delta and Gamma.
-
-    Returns:
-    - Dictionary with price, delta, gamma
+    Trinomial Tree model for pricing European or American options, with Delta, Gamma, and Implied Volatility.
     """
 
     option_type = option_type.lower()
@@ -203,7 +194,6 @@ def trinomial_tree_model(
     pm = 2/3
     pd = 1/6 - (nu * sqrt(dt) / (2 * sigma * sqrt(3)))
 
-    # Clamp probabilities
     pu = max(0, min(1, pu))
     pd = max(0, min(1, pd))
     pm = 1 - pu - pd
@@ -211,24 +201,23 @@ def trinomial_tree_model(
     size = 2 * N + 1
     mid = N
 
-    # Initialize price and value trees
     prices = [[0] * size for _ in range(N + 1)]
     values = [[0] * size for _ in range(N + 1)]
     prices[0][mid] = S
 
-    # Build price tree
     for i in range(1, N + 1):
         for j in range(mid - i, mid + i + 1):
-            prices[i][j] = prices[i - 1][j - 1] * u if j > 0 else prices[i - 1][j] * d
-            if j == mid:  # middle node
+            if j > mid:
+                prices[i][j] = prices[i - 1][j - 1] * u
+            elif j < mid:
+                prices[i][j] = prices[i - 1][j + 1] * d
+            else:
                 prices[i][j] = prices[i - 1][j]
 
-    # Terminal option values
     for j in range(size):
         spot = prices[N][j]
         values[N][j] = max(0, spot - K) if option_type == "call" else max(0, K - spot)
 
-    # Backward induction
     for i in reversed(range(N)):
         for j in range(mid - i, mid + i + 1):
             cont_val = disc * (
@@ -243,28 +232,36 @@ def trinomial_tree_model(
             else:
                 values[i][j] = cont_val
 
-        # Save values from second level for Greeks
         if i == 2:
             V_upup = values[i][mid + 2]
             V_middle = values[i][mid]
             V_downdown = values[i][mid - 2]
-
             S_upup = prices[i][mid + 2]
             S_middle = prices[i][mid]
             S_downdown = prices[i][mid - 2]
 
-    # Delta and Gamma (central difference)
     delta = (values[1][mid + 1] - values[1][mid - 1]) / (prices[1][mid + 1] - prices[1][mid - 1])
     gamma = (
         (V_upup - 2 * V_middle + V_downdown) /
         ((S_upup - S_middle) * (S_middle - S_downdown))
     )
 
-    return {
+    result = {
         "price": values[0][mid],
         "delta": delta,
         "gamma": gamma
     }
+
+    if market_price is not None:
+        def objective(vol):
+            return trinomial_tree_model(S, K, T, r, vol, N, option_type, american)["price"] - market_price
+        try:
+            implied_vol = brentq(objective, 1e-6, 5.0)
+            result["implied_vol"] = implied_vol
+        except:
+            result["implied_vol"] = None
+
+    return result
 
 def monte_carlo_option_price(
     S: float,
@@ -273,20 +270,18 @@ def monte_carlo_option_price(
     r: float,
     sigma: float,
     num_paths: int = 10000,
-    option_type: str = "call"
+    option_type: str = "call",
+    market_price: float = None
 ) -> dict:
     """
-    Monte Carlo simulation for European call/put option pricing with Delta and Gamma.
-
-    Returns:
-    - Dictionary with price, delta, gamma
+    Monte Carlo simulation for European call/put option pricing.
+    Includes Delta, Gamma, and optional Implied Volatility.
     """
 
     option_type = option_type.lower()
     if option_type not in ["call", "put"]:
         raise ValueError("option_type must be 'call' or 'put'")
 
-    # Generate end prices using vectorized GBM
     Z = np.random.standard_normal(num_paths)
     ST = S * np.exp((r - 0.5 * sigma**2) * T + sigma * sqrt(T) * Z)
 
@@ -295,10 +290,9 @@ def monte_carlo_option_price(
     else:
         payoffs = np.maximum(K - ST, 0)
 
-    # Discount back to present
     price = exp(-r * T) * np.mean(payoffs)
 
-    # Estimate Delta via finite difference
+    # Finite difference for Greeks
     dS = S * 0.01
     ST_up = (S + dS) * np.exp((r - 0.5 * sigma**2) * T + sigma * sqrt(T) * Z)
     ST_down = (S - dS) * np.exp((r - 0.5 * sigma**2) * T + sigma * sqrt(T) * Z)
@@ -316,8 +310,19 @@ def monte_carlo_option_price(
     delta = (V_up - V_down) / (2 * dS)
     gamma = (V_up - 2 * price + V_down) / (dS ** 2)
 
-    return {
+    result = {
         "price": price,
         "delta": delta,
         "gamma": gamma
     }
+
+    if market_price is not None:
+        def objective(vol):
+            return monte_carlo_option_price(S, K, T, r, vol, num_paths, option_type)["price"] - market_price
+        try:
+            implied_vol = brentq(objective, 1e-6, 5.0)
+            result["implied_vol"] = implied_vol
+        except:
+            result["implied_vol"] = None
+
+    return result
