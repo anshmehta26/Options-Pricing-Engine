@@ -1,5 +1,6 @@
 from math import exp, sqrt, log
 from scipy.stats import norm
+import numpy as np
 
 def black_scholes_model(
     S: float,
@@ -242,6 +243,62 @@ def trinomial_tree_model(
 
     return {
         "price": values[0][mid],
+        "delta": delta,
+        "gamma": gamma
+    }
+
+def monte_carlo_option_price(
+    S: float,
+    K: float,
+    T: float,
+    r: float,
+    sigma: float,
+    num_paths: int = 10000,
+    option_type: str = "call"
+) -> dict:
+    """
+    Monte Carlo simulation for European call/put option pricing with Delta and Gamma.
+
+    Returns:
+    - Dictionary with price, delta, gamma
+    """
+
+    option_type = option_type.lower()
+    if option_type not in ["call", "put"]:
+        raise ValueError("option_type must be 'call' or 'put'")
+
+    # Generate end prices using vectorized GBM
+    Z = np.random.standard_normal(num_paths)
+    ST = S * np.exp((r - 0.5 * sigma**2) * T + sigma * sqrt(T) * Z)
+
+    if option_type == "call":
+        payoffs = np.maximum(ST - K, 0)
+    else:
+        payoffs = np.maximum(K - ST, 0)
+
+    # Discount back to present
+    price = exp(-r * T) * np.mean(payoffs)
+
+    # Estimate Delta via finite difference
+    dS = S * 0.01
+    ST_up = (S + dS) * np.exp((r - 0.5 * sigma**2) * T + sigma * sqrt(T) * Z)
+    ST_down = (S - dS) * np.exp((r - 0.5 * sigma**2) * T + sigma * sqrt(T) * Z)
+
+    if option_type == "call":
+        payoff_up = np.maximum(ST_up - K, 0)
+        payoff_down = np.maximum(ST_down - K, 0)
+    else:
+        payoff_up = np.maximum(K - ST_up, 0)
+        payoff_down = np.maximum(K - ST_down, 0)
+
+    V_up = exp(-r * T) * np.mean(payoff_up)
+    V_down = exp(-r * T) * np.mean(payoff_down)
+
+    delta = (V_up - V_down) / (2 * dS)
+    gamma = (V_up - 2 * price + V_down) / (dS ** 2)
+
+    return {
+        "price": price,
         "delta": delta,
         "gamma": gamma
     }
