@@ -1,33 +1,31 @@
 from math import exp, sqrt, log
 from scipy.stats import norm
+from scipy.optimize import brentq
 import numpy as np
 
-def black_scholes_model(
-    S: float,
-    K: float,
-    T: float,
-    r: float,
-    sigma: float,
-    option_type: str = "call"
-) -> dict:
+def black_scholes_model(S, K, T, r, sigma, option_type="call", market_price=None):
     """
-    Calculate the Black-Scholes option price and Greeks.
+    Calculate Black-Scholes price, Greeks, and implied volatility (if market price is provided).
+    
+    Parameters:
+    - S: Current stock price
+    - K: Strike price
+    - T: Time to expiration (in years)
+    - r: Risk-free rate (annualized)
+    - sigma: Volatility (initial guess for IV if calculating)
+    - option_type: "call" or "put"
+    - market_price: Actual option market price (optional)
 
-    Returns a dictionary with:
-    - price
-    - delta
-    - gamma
-    - theta
-    - vega
-    - rho
+    Returns:
+    Dictionary with:
+        price, delta, gamma, theta, vega, rho, implied_vol (if market_price given)
     """
-
     option_type = option_type.lower()
     if option_type not in ["call", "put"]:
         raise ValueError("option_type must be 'call' or 'put'")
 
     sqrt_T = sqrt(T)
-    d1 = (log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * sqrt_T)
+    d1 = (log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * sqrt_T)
     d2 = d1 - sigma * sqrt_T
 
     Nd1 = norm.cdf(d1)
@@ -50,14 +48,35 @@ def black_scholes_model(
     gamma = pdf_d1 / (S * sigma * sqrt_T)
     vega = S * pdf_d1 * sqrt_T
 
-    return {
+    result = {
         "price": price,
         "delta": delta,
         "gamma": gamma,
         "theta": theta,
         "vega": vega,
-        "rho": rho
+        "rho": rho,
     }
+
+    # Optional: calculate implied volatility using Brent's method
+    if market_price is not None:
+        def objective(vol):
+            if vol <= 0:
+                return float('inf')
+            d1 = (log(S / K) + (r + 0.5 * vol ** 2) * T) / (vol * sqrt(T))
+            d2 = d1 - vol * sqrt(T)
+            if option_type == "call":
+                return S * norm.cdf(d1) - K * exp(-r * T) * norm.cdf(d2) - market_price
+            else:
+                return K * exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1) - market_price
+
+        try:
+            implied_vol = brentq(objective, 1e-6, 5.0)
+        except ValueError:
+            implied_vol = None  # Could not converge
+
+        result["implied_vol"] = implied_vol
+
+    return result
 
 
 def binomial_tree_model(
