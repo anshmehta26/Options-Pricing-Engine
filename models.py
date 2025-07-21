@@ -70,7 +70,7 @@ def binomial_tree_model(
     american: bool = False
 ) -> float:
     """
-    Calculate the option price using the Binomial Tree (Cox-Ross-Rubinstein) model.
+    Binomial Tree option pricing model with Delta and Gamma.
 
     Parameters:
     - S : float
@@ -91,32 +91,30 @@ def binomial_tree_model(
         Whether to price as an American-style option
 
     Returns:
-    - float : Option price
+    - dict with price, delta, gamma
     """
 
-    # Normalize and validate option_type
     option_type = option_type.lower()
     if option_type not in ["call", "put"]:
         raise ValueError("option_type must be 'call' or 'put'")
-
-    if N < 1:
-        raise ValueError("N must be at least 1")
+    if N < 2:
+        raise ValueError("N must be at least 2 to compute Gamma")
 
     dt = T / N
-    u = exp(sigma * sqrt(dt))       # Up factor
-    d = 1 / u                       # Down factor
-    p = (exp(r * dt) - d) / (u - d)  # Risk-neutral probability
+    u = exp(sigma * sqrt(dt))
+    d = 1 / u
+    p = (exp(r * dt) - d) / (u - d)
 
-    # Step 1: Terminal asset prices
+    # Step 1: Asset prices at maturity
     asset_prices = [S * (u ** j) * (d ** (N - j)) for j in range(N + 1)]
 
-    # Step 2: Terminal option values
+    # Step 2: Option values at maturity
     if option_type == "call":
         option_values = [max(0, price - K) for price in asset_prices]
     else:
         option_values = [max(0, K - price) for price in asset_prices]
 
-    # Step 3: Backward induction
+    # Step 3: Backward induction to root, save step 1 & 2 values for Greeks
     for i in reversed(range(N)):
         for j in range(i + 1):
             expected = exp(-r * dt) * (p * option_values[j + 1] + (1 - p) * option_values[j])
@@ -128,4 +126,24 @@ def binomial_tree_model(
             else:
                 option_values[j] = expected
 
-    return option_values[0]
+        if i == 2:
+            V_upup = option_values[2]
+            V_updown = option_values[1]
+            V_downdown = option_values[0]
+
+    # Compute Delta
+    S_up = S * u
+    S_down = S * d
+    delta = (option_values[1] - option_values[0]) / (S_up - S_down)
+
+    # Compute Gamma
+    S_upup = S * (u ** 2)
+    S_mid = S
+    S_downdown = S * (d ** 2)
+    gamma = ((V_upup - V_updown) / (S_upup - S_mid) - (V_updown - V_downdown) / (S_mid - S_downdown)) / ((S_upup - S_downdown) / 2)
+
+    return {
+        "price": option_values[0],
+        "delta": delta,
+        "gamma": gamma
+    }
