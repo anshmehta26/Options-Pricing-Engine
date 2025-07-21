@@ -1,31 +1,62 @@
 from math import exp, sqrt, log
 from scipy.stats import norm
 
-def black_scholes_model(S: float, K: float, T: float, r: float, sigma: float, option_type: str = "call") -> float:
+def black_scholes_model(
+    S: float,
+    K: float,
+    T: float,
+    r: float,
+    sigma: float,
+    option_type: str = "call"
+) -> dict:
     """
-    Calculate the Black-Scholes option price.
+    Calculate the Black-Scholes option price and Greeks.
 
-    Parameters:
-    S : float : Current stock price
-    K : float : Strike price
-    T : float : Time to expiration in years
-    r : float : Risk-free interest rate (annualized)
-    sigma : float : Volatility of the underlying stock (annualized)
-    option_type : str : "call" or "put"
-
-    Returns:
-    float : The Black-Scholes option price
+    Returns a dictionary with:
+    - price
+    - delta
+    - gamma
+    - theta
+    - vega
+    - rho
     """
 
-    d1 = (log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * sqrt(T))
-    d2 = d1 - sigma * sqrt(T)
+    option_type = option_type.lower()
+    if option_type not in ["call", "put"]:
+        raise ValueError("option_type must be 'call' or 'put'")
+
+    sqrt_T = sqrt(T)
+    d1 = (log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * sqrt_T)
+    d2 = d1 - sigma * sqrt_T
+
+    Nd1 = norm.cdf(d1)
+    Nd2 = norm.cdf(d2)
+    Nnd1 = norm.cdf(-d1)
+    Nnd2 = norm.cdf(-d2)
+    pdf_d1 = norm.pdf(d1)
 
     if option_type == "call":
-        return S * norm.cdf(d1) - K * exp(-r * T) * norm.cdf(d2)
-    elif option_type == "put":
-        return K * exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1)
+        price = S * Nd1 - K * exp(-r * T) * Nd2
+        delta = Nd1
+        theta = (-S * pdf_d1 * sigma / (2 * sqrt_T)) - r * K * exp(-r * T) * Nd2
+        rho = K * T * exp(-r * T) * Nd2
     else:
-        raise ValueError("option_type must be 'call' or 'put'")
+        price = K * exp(-r * T) * Nnd2 - S * Nnd1
+        delta = Nd1 - 1
+        theta = (-S * pdf_d1 * sigma / (2 * sqrt_T)) + r * K * exp(-r * T) * Nnd2
+        rho = -K * T * exp(-r * T) * Nnd2
+
+    gamma = pdf_d1 / (S * sigma * sqrt_T)
+    vega = S * pdf_d1 * sqrt_T
+
+    return {
+        "price": price,
+        "delta": delta,
+        "gamma": gamma,
+        "theta": theta,
+        "vega": vega,
+        "rho": rho
+    }
 
 
 def binomial_tree_model(
