@@ -147,3 +147,101 @@ def binomial_tree_model(
         "delta": delta,
         "gamma": gamma
     }
+
+def trinomial_tree_model(
+    S: float,
+    K: float,
+    T: float,
+    r: float,
+    sigma: float,
+    N: int = 100,
+    option_type: str = "call",
+    american: bool = False
+) -> dict:
+    """
+    Trinomial Tree model for pricing European or American options, with Delta and Gamma.
+
+    Returns:
+    - Dictionary with price, delta, gamma
+    """
+
+    option_type = option_type.lower()
+    if option_type not in ["call", "put"]:
+        raise ValueError("option_type must be 'call' or 'put'")
+    if N < 2:
+        raise ValueError("N must be at least 2 to compute Gamma")
+
+    dt = T / N
+    nu = r - 0.5 * sigma**2
+    dx = sigma * sqrt(3 * dt)
+
+    u = exp(dx)
+    d = 1 / u
+    disc = exp(-r * dt)
+
+    pu = 1/6 + (nu * sqrt(dt) / (2 * sigma * sqrt(3)))
+    pm = 2/3
+    pd = 1/6 - (nu * sqrt(dt) / (2 * sigma * sqrt(3)))
+
+    # Clamp probabilities
+    pu = max(0, min(1, pu))
+    pd = max(0, min(1, pd))
+    pm = 1 - pu - pd
+
+    size = 2 * N + 1
+    mid = N
+
+    # Initialize price and value trees
+    prices = [[0] * size for _ in range(N + 1)]
+    values = [[0] * size for _ in range(N + 1)]
+    prices[0][mid] = S
+
+    # Build price tree
+    for i in range(1, N + 1):
+        for j in range(mid - i, mid + i + 1):
+            prices[i][j] = prices[i - 1][j - 1] * u if j > 0 else prices[i - 1][j] * d
+            if j == mid:  # middle node
+                prices[i][j] = prices[i - 1][j]
+
+    # Terminal option values
+    for j in range(size):
+        spot = prices[N][j]
+        values[N][j] = max(0, spot - K) if option_type == "call" else max(0, K - spot)
+
+    # Backward induction
+    for i in reversed(range(N)):
+        for j in range(mid - i, mid + i + 1):
+            cont_val = disc * (
+                pu * values[i + 1][j + 1] +
+                pm * values[i + 1][j] +
+                pd * values[i + 1][j - 1]
+            )
+            if american:
+                spot = prices[i][j]
+                exercise_val = max(0, spot - K) if option_type == "call" else max(0, K - spot)
+                values[i][j] = max(cont_val, exercise_val)
+            else:
+                values[i][j] = cont_val
+
+        # Save values from second level for Greeks
+        if i == 2:
+            V_upup = values[i][mid + 2]
+            V_middle = values[i][mid]
+            V_downdown = values[i][mid - 2]
+
+            S_upup = prices[i][mid + 2]
+            S_middle = prices[i][mid]
+            S_downdown = prices[i][mid - 2]
+
+    # Delta and Gamma (central difference)
+    delta = (values[1][mid + 1] - values[1][mid - 1]) / (prices[1][mid + 1] - prices[1][mid - 1])
+    gamma = (
+        (V_upup - 2 * V_middle + V_downdown) /
+        ((S_upup - S_middle) * (S_middle - S_downdown))
+    )
+
+    return {
+        "price": values[0][mid],
+        "delta": delta,
+        "gamma": gamma
+    }
